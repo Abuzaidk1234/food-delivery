@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Food Delivery Tracker</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+  <style>
+    #map { height: 100vh; width: 100vw; }
+    body { margin: 0; font-family: Arial; }
+    .delivery-popup { 
+      padding: 12px; 
+      background: white;
+      border-radius: 6px;
+      box-shadow: 0 0 12px rgba(0,0,0,0.3);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // Geoapify API Keys
+    const MAP_TILES_KEY = "a9bfae21d2b34743a3efbf2a521e1b16";
+    const ROUTING_KEY = "7d1c0d3721cd4522b4cf6245c915025b";
+
+    // Map initialization
+    const map = L.map('map').setView([20.5937, 78.9629], 15); // Default: India at zoom 15
+    L.tileLayer(`https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=${MAP_TILES_KEY}`, {
+      attribution: 'Powered by <a href="https://www.geoapify.com/" target="_blank">Geoapify</a>',
+      maxZoom: 20
+    }).addTo(map);
+
+    // Socket.io connection
+    const socket = io();
+    const isAdmin = window.location.href.includes('localhost');
+    console.log(isAdmin ? "Admin connected" : "Delivery connected");
+
+    // Custom icons (64x64 pixels)
+    const icons = {
+      sofa: L.icon({
+        iconUrl: 'icons/sofa.png',
+        iconSize: [64, 64],
+        iconAnchor: [32, 32],
+        popupAnchor: [0, -32]
+      }),
+      scooter: L.icon({
+        iconUrl: 'icons/scooter.png',
+        iconSize: [64, 64],
+        iconAnchor: [32, 32],
+        popupAnchor: [0, -32]
+      })
+    };
+
+    // Marker storage
+    const markers = {
+      sofa: null,
+      scooters: {},
+      routes: {}
+    };
+
+    // Update route using Geoapify
+    async function updateRoute(id, from, to) {
+      try {
+        const url = `https://api.geoapify.com/v1/routing?waypoints=${from.lat},${from.lng}|${to.lat},${to.lng}&mode=drive&apiKey=${ROUTING_KEY}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        // Clear old route
+        if (markers.routes[id]) map.removeLayer(markers.routes[id]);
+
+        // Draw new route
+        const coordinates = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+        markers.routes[id] = L.polyline(coordinates, {
+          color: `hsl(${id * 60}, 100%, 50%)`,
+          weight: 6,
+          opacity: 0.8
+        }).addTo(map);
+
+        // Update ETA (30km/h average speed)
+        const distanceKm = data.features[0].properties.distance / 1000;
+        const etaMins = Math.round((distanceKm / 30) * 60);
+        document.getElementById(`eta-${id}`).textContent = `${etaMins} mins`;
+
+      } catch (error) {
+        console.error("Routing failed:", error);
+      }
+    }
+
+    // Admin functionality
+    if (isAdmin) {
+      navigator.geolocation.watchPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords;
+          const location = { lat: latitude, lng: longitude };
+          
+          // Update or create sofa marker
+          if (!markers.sofa) {
+            markers.sofa = L.marker([latitude, longitude], {
+              icon: icons.sofa,
+              zIndexOffset: 1000
+            }).addTo(map)
+              .bindPopup("<div class='delivery-popup'><b>You (Destination)</b></div>")
+              .openPopup();
+            map.setView([latitude, longitude], 15);
+          } else {
+            markers.sofa.setLatLng([latitude, longitude]);
+          }
+          
+          // Send to server
+          socket.emit('admin-location', location);
+          
+          // Update all routes
+          Object.keys(markers.scooters).forEach(id => {
+            updateRoute(id, markers.scooters[id].getLatLng(), [latitude, longitude]);
+          });
+        },
+        err => alert("Please enable location access to continue")
+      );
+
+      // Handle scooter updates
+      socket.on('scooter-update', ({ id, lat, lng }) => {
+        if (!markers.scooters[id]) {
+          markers.scooters[id] = L.marker([lat, lng], {
+            icon: icons.scooter,
+            zIndexOffset: 900
+          }).addTo(map)
+            .bindPopup(`<div class='delivery-popup'><b>Delivery #${id}</b><br>ETA: <span id="eta-${id}">Calculating...</span></div>`);
+          
+          if (markers.sofa) {
+            updateRoute(id, { lat, lng }, markers.sofa.getLatLng());
+          }
+        } else {
+          markers.scooters[id].setLatLng([lat, lng]);
+          if (markers.sofa) {
+            updateRoute(id, { lat, lng }, markers.sofa.getLatLng());
+          }
+        }
+      });
+
+    // Delivery functionality
+    } else {
+      navigator.geolocation.watchPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords;
+          socket.emit('scooter-location', { 
+            lat: latitude, 
+            lng: longitude 
+          });
+          
+          if (!markers.scooters['me']) {
+            markers.scooters['me'] = L.marker([latitude, longitude], {
+              icon: icons.scooter,
+              zIndexOffset: 1000
+            }).addTo(map)
+              .bindPopup("<div class='delivery-popup'><b>You (Delivery)</b></div>");
+            map.setView([latitude, longitude], 15);
+          } else {
+            markers.scooters['me'].setLatLng([latitude, longitude]);
+          }
+        },
+        err => alert("Please enable location access for tracking")
+      );
+
+      // Handle destination updates
+      socket.on('sofa-update', pos => {
+        if (!markers.sofa) {
+          markers.sofa = L.marker([pos.lat, pos.lng], {
+            icon: icons.sofa,
+            zIndexOffset: 900
+          }).addTo(map)
+            .bindPopup("<div class='delivery-popup'><b>Destination</b></div>");
+        } else {
+          markers.sofa.setLatLng([pos.lat, pos.lng]);
+        }
+        
+        if (markers.scooters['me']) {
+          updateRoute('me', markers.scooters['me'].getLatLng(), [pos.lat, pos.lng]);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
