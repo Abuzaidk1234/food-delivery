@@ -37,6 +37,11 @@
     const isAdmin = window.location.href.includes('localhost');
     console.log(isAdmin ? "Admin connected" : "Delivery connected");
 
+    window.addEventListener('testToWaypointReady', (event) => {
+    markers.sofa = event.detail;
+    const toWaypointMarker = L.marker(markers.sofa).addTo(map).bindPopup("Destination").openPopup();
+    });
+
     // Custom icons (64x64 pixels)
     const icons = {
       sofa: L.icon({
