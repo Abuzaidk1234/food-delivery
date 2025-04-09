@@ -23,12 +23,12 @@
   <script>
     // Geoapify API Keys
     const MAP_TILES_KEY = "a9bfae21d2b34743a3efbf2a521e1b16";
-    const ROUTING_KEY = "7d1c0d3721cd4522b4cf6245c915025b";
+    const ROUTING_KEY = "1b95c3f497b54d0f9d3f098eb3636c89 "; //7d1c0d3721cd4522b4cf6245c915025b
 
     // Map initialization
-    const map = L.map('map').setView([20.5937, 78.9629], 15); // Default: India at zoom 15
+    const map = L.map('map').setView([0, 0], 15); // Default: India at zoom 15
     L.tileLayer(`https://maps.geoapify.com/v1/tile/osm-bright/{z}/{x}/{y}.png?apiKey=${MAP_TILES_KEY}`, {
-      attribution: 'Powered by <a href="https://www.geoapify.com/" target="_blank">Geoapify</a>',
+      attribution: 'OpenStreetMap',
       maxZoom: 20
     }).addTo(map);
 
@@ -62,21 +62,24 @@
 
     // Update route using Geoapify
     async function updateRoute(id, from, to) {
+      const url = `https://api.geoapify.com/v1/routing?waypoints=${from.lat},${from.lng}|${to.lat},${to.lng}&mode=drive&apiKey=${ROUTING_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
       try {
-        const url = `https://api.geoapify.com/v1/routing?waypoints=${from.lat},${from.lng}|${to.lat},${to.lng}&mode=drive&apiKey=${ROUTING_KEY}`;
-        const response = await fetch(url);
-        const data = await response.json();
+        //const url = `https://api.geoapify.com/v1/routing?waypoints=${from.lat},${from.lng}|${to.lat},${to.lng}&mode=drive&apiKey=${ROUTING_KEY}`;
+        //const response = await fetch(url);
+        //const data = await response.json();
 
         // Clear old route
         if (markers.routes[id]) map.removeLayer(markers.routes[id]);
 
         // Draw new route
-        const coordinates = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
-        markers.routes[id] = L.polyline(coordinates, {
-          color: `hsl(${id * 60}, 100%, 50%)`,
-          weight: 6,
-          opacity: 0.8
-        }).addTo(map);
+        //const coordinates = data.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+        //markers.routes[id] = L.polyline(coordinates, {
+        //color: `hsl(${id * 60}, 100%, 50%)`,
+         // weight: 6,
+         // opacity: 0.8
+        //}).addTo(map);
 
         // Update ETA (30km/h average speed)
         const distanceKm = data.features[0].properties.distance / 1000;
@@ -86,6 +89,22 @@
       } catch (error) {
         console.error("Routing failed:", error);
       }
+
+      fetch(url).then(res => res.json()).then(result => {
+        console.log(result);
+
+        L.geoJSON(result, {
+            style: (feature) => {
+                return {
+                    color: "rgba(20, 137, 255, 0.7)",
+                    weight: 5
+                };
+            }
+        }).bindPopup((layer) => {
+            return `${layer.feature.properties.distance} ${layer.feature.properties.distance_units}, ${layer.feature.properties.time}`;
+        }).addTo(map);
+
+    }, error => console.log(error));
     }
 
     // Admin functionality
@@ -94,6 +113,7 @@
         pos => {
           const { latitude, longitude } = pos.coords;
           const location = { lat: latitude, lng: longitude };
+          //map.setView([latitude, longitude]);
           
           // Update or create sofa marker
           if (!markers.sofa) {
@@ -103,7 +123,7 @@
             }).addTo(map)
               .bindPopup("<div class='delivery-popup'><b>You (Destination)</b></div>")
               .openPopup();
-            map.setView([latitude, longitude], 15);
+            map.setView([latitude, longitude]);
           } else {
             markers.sofa.setLatLng([latitude, longitude]);
           }
@@ -148,6 +168,8 @@
             lat: latitude, 
             lng: longitude 
           });
+
+          
           
           if (!markers.scooters['me']) {
             markers.scooters['me'] = L.marker([latitude, longitude], {
@@ -155,7 +177,7 @@
               zIndexOffset: 1000
             }).addTo(map)
               .bindPopup("<div class='delivery-popup'><b>You (Delivery)</b></div>");
-            map.setView([latitude, longitude], 15);
+            map.setView([latitude, longitude]);
           } else {
             markers.scooters['me'].setLatLng([latitude, longitude]);
           }
